@@ -1,0 +1,259 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Creative Solar System</title>
+<style>
+  html,body { height:100%; margin:0; background:#000; color:#fff; font-family:Arial; overflow:hidden;}
+  /* Front page */
+  #frontPage {
+    position:fixed; top:0; left:0; width:100vw; height:100vh; background:#000;
+    display:flex; justify-content:center; align-items:center; z-index:10; overflow:hidden;
+  }
+  #starsCanvas {
+    position:absolute; top:0; left:0; width:100%; height:100%; z-index:1;
+  }
+  #frontContent {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; z-index:5;
+  }
+  #frontContent h1 {
+    font-size:3em; color:#ffcc00; text-shadow:0 0 15px #ffcc00;
+  }
+  #frontContent p {
+    color:white; font-size:1.2em; text-shadow:0 0 5px #fff;
+  }
+  #frontContent button {
+    padding:15px 30px; font-size:1.2em; border:none; border-radius:6px;
+    background:#ffcc00; color:#000; cursor:pointer; box-shadow:0 0 10px #ffcc00; transition:0.3s;
+  }
+  #frontContent button:hover { box-shadow:0 0 20px #ffcc00; }
+
+  /* Solar system canvas */
+  #app { display:none; height:100vh; width:100vw; align-items:center; justify-content:center; }
+  canvas { width:100%; height:100%; display:block; background:transparent; }
+  #debug { position:fixed; right:8px; top:8px; background:rgba(0,0,0,0.8); padding:8px; border-radius:6px; font-size:13px; max-width:320px; white-space:pre-wrap; z-index:5; }
+  #controls { position:fixed; left:8px; top:8px; background:rgba(0,0,0,0.6); padding:8px; border-radius:6px; font-size:13px; z-index:5;}
+  video#cam { display:block; position:fixed; left:8px; bottom:8px; width:240px; height:180px; border:2px solid #444; background:#111; z-index:5; }
+</style>
+</head>
+<body>
+
+<!-- Front page -->
+<div id="frontPage">
+  <canvas id="starsCanvas"></canvas>
+  <div id="frontContent">
+    <h1>Creative Solar System</h1>
+    <p>Use gestures to explore the planets</p>
+    <button id="startBtn">Start</button>
+  </div>
+</div>
+
+<!-- Solar system app -->
+<div id="app">
+  <canvas id="view"></canvas>
+</div>
+
+<div id="controls">
+  <div>Model: Creative Solar System</div>
+  <div>Gestures: pinch = zoom, move palm = rotate</div>
+</div>
+<div id="debug">Status: waiting...</div>
+<video id="cam" autoplay playsinline muted></video>
+
+<script src="https://unpkg.com/three@0.153.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+// Front page star animation
+const canvasStars = document.getElementById('starsCanvas');
+const ctx = canvasStars.getContext('2d');
+canvasStars.width = window.innerWidth;
+canvasStars.height = window.innerHeight;
+
+window.addEventListener('resize', ()=> {
+  canvasStars.width = window.innerWidth;
+  canvasStars.height = window.innerHeight;
+});
+
+const stars = [];
+for(let i=0;i<200;i++){
+  stars.push({x:Math.random()*canvasStars.width, y:Math.random()*canvasStars.height, size:Math.random()*2, speed:Math.random()*0.5+0.2});
+}
+
+function animateStars(){
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0,0,canvasStars.width,canvasStars.height);
+  ctx.fillStyle='white';
+  stars.forEach(s=>{
+    s.y += s.speed;
+    if(s.y>canvasStars.height) s.y=0;
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,s.size,0,Math.PI*2);
+    ctx.fill();
+  });
+  requestAnimationFrame(animateStars);
+}
+animateStars();
+
+// Start button
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  document.getElementById('frontPage').style.display='none';
+  document.getElementById('app').style.display='flex';
+  initSolarSystem();
+});
+
+async function initSolarSystem(){
+  const debugEl = document.getElementById('debug');
+  const debug = (t) => { debugEl.innerText = 'Status: ' + t; console.log('Status:', t); };
+
+  // Scene & Lights
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  scene.add(new THREE.AmbientLight(0xffffff,0.6));
+  const dir = new THREE.DirectionalLight(0xffffff,0.7);
+  dir.position.set(5,10,7); scene.add(dir);
+
+  // Planet Data
+  const planetData = [
+    { name:"Sun", size:1.2, dist:0, color:0xffcc00 },
+    { name:"Mercury", size:0.1, dist:2, color:0xaaaaaa },
+    { name:"Venus", size:0.2, dist:3, color:0xffff66, emissive:0xffff33 },
+    { name:"Earth", size:0.25, dist:4, color:0x3366ff, emissive:0x1122ff },
+    { name:"Mars", size:0.2, dist:5, color:0xff3300 },
+    { name:"Jupiter", size:0.9, dist:7, color:0xff9966 },
+    { name:"Saturn", size:0.6, dist:9, color:0xffcc99, ring:true },
+    { name:"Uranus", size:0.4, dist:11, color:0x66ccff },
+    { name:"Neptune", size:0.4, dist:13, color:0x3333ff }
+  ];
+
+  const solarGroup = new THREE.Group();
+  scene.add(solarGroup);
+
+  const planets = [];
+  planetData.forEach((p,i)=>{
+    const geom = new THREE.SphereGeometry(p.size,32,32);
+    const mat = new THREE.MeshStandardMaterial({color:p.color,emissive:p.emissive||0x000000});
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(p.dist,0,0);
+    solarGroup.add(mesh);
+    planets.push({mesh,data:p});
+
+    // Orbit
+    if(p.dist>0){
+      const curve = new THREE.EllipseCurve(0,0,p.dist,p.dist);
+      const points = curve.getPoints(100);
+      const geomOrbit = new THREE.BufferGeometry().setFromPoints(points);
+      const orbit = new THREE.LineLoop(geomOrbit,new THREE.LineBasicMaterial({color:0x444444}));
+      orbit.rotation.x=Math.PI/2;
+      solarGroup.add(orbit);
+    }
+
+    // Saturn rings
+    if(p.ring){
+      const ringGeom1 = new THREE.RingGeometry(p.size*1.1,p.size*1.4,64);
+      const ringGeom2 = new THREE.RingGeometry(p.size*1.45,p.size*1.7,64);
+      const ringMat = new THREE.MeshBasicMaterial({color:0xffffcc, side:THREE.DoubleSide, transparent:true, opacity:0.6});
+      const ring1 = new THREE.Mesh(ringGeom1, ringMat);
+      const ring2 = new THREE.Mesh(ringGeom2, ringMat);
+      ring1.rotation.x=ring2.rotation.x=Math.PI/2;
+      mesh.add(ring1); mesh.add(ring2);
+    }
+
+    // Labels attached to planet
+    const canvasLabel = document.createElement('canvas');
+    canvasLabel.width = 256;
+    canvasLabel.height = 64;
+    const ctx = canvasLabel.getContext('2d');
+    ctx.font = '50px Arial';
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.name, canvasLabel.width/2, 50);
+    const texture = new THREE.CanvasTexture(canvasLabel);
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(2, 0.5, 1);
+    sprite.position.set(0, p.size + 0.7, 0);
+    mesh.add(sprite);
+  });
+
+  // Renderer & Camera
+  const canvas = document.getElementById('view');
+  const renderer = new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+
+  const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth/canvas.clientHeight,0.1,200);
+  camera.position.set(0,10,25);
+  camera.lookAt(0,0,0);
+
+  window.addEventListener('resize',()=>{
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w,h,false);
+    camera.aspect=w/h;
+    camera.updateProjectionMatrix();
+  });
+
+  let rotateX=0, rotateY=0, scale=1.0;
+  let targetRotateX=0, targetRotateY=0, targetScale=1.0;
+
+  function render(){
+    rotateX += (targetRotateX-rotateX)*0.12;
+    rotateY += (targetRotateY-rotateY)*0.12;
+    scale += (targetScale-scale)*0.12;
+    solarGroup.rotation.x=rotateX;
+    solarGroup.rotation.y=rotateY;
+    solarGroup.scale.setScalar(scale);
+
+    const t=Date.now()*0.0002;
+    planets.forEach((p,i)=>{
+      if(p.data.dist>0){
+        p.mesh.position.x=Math.cos(t*(i+1))*p.data.dist;
+        p.mesh.position.z=Math.sin(t*(i+1))*p.data.dist;
+      }
+    });
+
+    renderer.render(scene,camera);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  // Camera & gestures
+  const videoElement = document.getElementById('cam');
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}});
+    videoElement.srcObject=stream; await videoElement.play();
+    debug('camera started');
+  } catch(err){ debug('Camera error: '+err.message); return; }
+
+  const hands = new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+  hands.setOptions({ maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.6, minTrackingConfidence:0.6 });
+
+  let lastPinchDist=null,lastPalm=null;
+  hands.onResults(results=>{
+    if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){
+      lastPinchDist=null; lastPalm=null; return;
+    }
+    const lm = results.multiHandLandmarks[0];
+    const thumb=lm[4], index=lm[8];
+    const palm={x:(lm[0].x+lm[9].x)/2, y:(lm[0].y+lm[9].y)/2};
+    const pinchDist=Math.hypot(thumb.x-index.x, thumb.y-index.y);
+    if(lastPinchDist!==null){
+      const pinchDelta=pinchDist-lastPinchDist;
+      if(Math.abs(pinchDelta)>0.005) targetScale=THREE.MathUtils.clamp(targetScale+(-pinchDelta)*2,0.5,3.0);
+    }
+    lastPinchDist=pinchDist;
+    if(lastPalm){
+      targetRotateY+=(palm.x-lastPalm.x)*8;
+      targetRotateX+=(palm.y-lastPalm.y)*6;
+    }
+    lastPalm=palm;
+  });
+
+  new Camera(videoElement,{onFrame:async()=>{await hands.send({image:videoElement})}, width:640,height:480}).start();
+  debug('running — pinch to zoom & move solar system');
+}
+</script>
+
+</body>
+</html>
